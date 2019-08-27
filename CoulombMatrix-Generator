@@ -42,3 +42,13 @@ for (c in 1:length(smivect)) {
   cmlist[[c]] <- cm
   rm(xyz, test, cm, i, j, zi, zj, eucdist)
 }
+
+#save cmlist as object
+saveRDS(cmlist, 'cmlist.rds')
+
+#get a vector of the heavy atom counts for each CM in the list and see the resulting distribution
+heavyatomcount <- vector()
+for (i in 1:length(cmlist)) {
+  heavyatomcount[i] <- nrow(cmlist[[i]])
+}
+hist(heavyatomcount)
