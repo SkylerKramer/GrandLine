@@ -1,0 +1,109 @@
+# this code uses a directory with chemical fingerprints to tune and train a model for each fingerprint/superclass combination
+# only seven superclasses were used because only seven of them had n > 50
+
+# evalutation function for GA
+evlParRadCV <- function(modelingData, cost, epsilon, sigma) {
+  # initialize rmse (the loss function)
+  rmse <- 0
+  
+  # k = 10 for 10-fold CV
+  k <- 10
+  kfoldInds <- sample(1:k, nrow(modelingData), replace = TRUE)
+
+  # repeat 
+  for (i in 1:k){
+    trainData <- modelingData[kfoldInds != i, , drop = F]
+    testData <- modelingData[kfoldInds == i, , drop = F,]
+
+    model <- ksvm(CCS ~ ., data = trainData, type = "eps-svr", scaled = F,
+                  kernel = "rbfdot",
+                  C = cost, epsilon = epsilon, kpar = list(sigma = sigma))
+    rmse[i] <- sqrt(mean((predict(model, newdata = testData) - testData$CCS) ^ 2))
+  }
+
+  return (mean(rmse))
+}
+
+# fitness function that calls the evaluation function
+fitFunRadCV <- function(x, modelingData) {
+  cost_val <- x[1]
+  epsilon_val <- x[2]
+  sigma_val <- x[3]
+
+  rmse_vals <- evlParRadCV(modelingData, cost_val, epsilon_val, sigma_val)
+
+  # return the negative value because algorithm is trying to maximize itself
+  return (-mean(rmse_vals))
+}
+
+# the seven superclasses used in this modeling
+supers <- c("Benzenoids", "Lipids and lipid-like molecules",
+            "Nucleosides, nucleotides, and analogues", "Organic acids and derivatives",
+            "Organic oxygen compounds", "Organoheterocyclic compounds",
+            "Phenylpropanoids and polyketides")
+            
+# the twelve fingerprints used in this study
+fps <- c("ap2d", "ap2dcount", "efp", "estate", "fp", "go", "kr", "krcount", "maccs", "pubchem", "substructure", "substructurecount")
+
+library(kernlab)
+library(GA)
+library(doParallel)
+
+for (i in 1:length(fps)) {
+  #read fp matrices, all of which started with 'n_' followed by an element from fps and '.csv'
+  fpLocation <- paste("PATH/TO/FILE/n_", fps[i], ".csv", sep = "")
+  fpsData <- read.csv(fpLocation)
+
+  for (j in 1:length(supers)) {
+    #split into scs
+    scData <- fpsData[which(fpsData$Superclass == supers[j]),]
+    scData <- scData[,-c(1:8)]
+
+    #remove columns with 0 variance
+    variances <- NA
+    variances <- apply(scData, 2, var)
+    variances <- names(variances[which(variances == 0)])
+    scData <- scData[,-which(names(scData) %in% variances)]
+
+    #split to tr and va
+    set.seed(1234)
+    scsamples <- sample(1:nrow(scData), size = 0.1*nrow(scData))
+    scTr <- scData[-scsamples,]
+    scVa <- scData[scsamples,]
+
+    #tune
+    bestVaError <- 1000000
+    bestHyp <- c(0,0,0)
+    for (k in 1:10) {
+      kga <- ga(type = "real-valued", fitness = fitFunRadCV, scTr,
+                names = c("cost", "epsilon", "sigma"),
+                lower = c(cost = 1e-4, epsilon = 1e-2, sigma = 1e-3),
+                upper = c(cost = 10, epsilon = 2, sigma = 2),
+                monitor = T, optim = T, parallel = T, popSize = 50, maxiter = 300,
+                run = 25)
+
+      rbf <- ksvm(CCS ~ ., data = scTr, type = "eps-svr",
+                  scaled = T, kernel = "rbfdot", C = kga@solution[1],
+                  epsilon = kga@solution[2],
+                  kpar = list(sigma = kga@solution[3]))
+
+      trerror <- mean(abs(predict(rbf, scTr) - scTr$CCS) / scTr$CCS*100)
+      vaerror <- mean(abs(predict(rbf, scVa) - scVa$CCS) / scVa$CCS*100)
+
+      if(vaerror < bestVaError){
+        bestVaError <- vaerror
+        bestHyp <- c(kga@solution[1], kga@solution[2], kga@solution[3])
+      }
+    }
+
+    #things to write to the file
+    fpAndSc <- paste("Fp and Sc:", fps[i], ";", supers[j], sep = " ")
+    hyperparameters <- paste("C, eps, sig:", bestHyp[1], ",",
+                             bestHyp[2], ",", bestHyp[3], sep = " ")
+    errors <- paste("Tr and Va:", trerror, "and", vaerror, sep = " ")
+
+    message <- paste(fpAndSc, hyperparameters, errors, sep = "\n")
+    write.table(message, file = "PATH/TO/FILE/scfp_modeling.txt",
+                quote = F, append = T, col.names = F, row.names = F)
+  }
+}
