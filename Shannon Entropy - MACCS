@@ -1,0 +1,27 @@
+# read a .csv with MACCS fingerprints (166 binary elements)
+# create a 166-element vector, where each element is a sum of correspond elements divided the number of tuples
+# calculate the Shannon entropy of this new probability vector to assess diversity of data set
+# plot the probability vector
+
+# read file
+maccs <- read.csv(PATH/TO/FILE)
+
+# create empty probability vector and initialize Shannon entropy score
+maccsVect <- rep(0,166)
+shaent <- 0
+
+# fill in the probability vector
+# this could easily be parallelized
+for (i in 1:166) {
+  maccsVect[i] <- sum(maccs[,(i)]) / nrow(maccs)
+  if (maccsVect[i] != 0) {
+    shaent <- shaent + maccsVect[i]*log2(maccsVect[i])
+  }
+}
+
+# final Shannon entropy score rounded to two decimals
+shaent <- round(-shaent, digits = 2)
+
+# plot data
+title <- paste("[M-H]- All", "; n =", nrow(maccs), "; SE =", shaent, sep = " ")
+barplot(maccsVect, main = title)
